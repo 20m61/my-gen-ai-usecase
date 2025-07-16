@@ -197,71 +197,57 @@ ${
   },
   ragPrompt(params: RagParams): string {
     if (params.promptType === 'RETRIEVE') {
-      return `You are an AI assistant that generates queries for document retrieval.
-Please generate a query following the <Query generation steps></Query generation steps>.
+      return `Transform the user's question into an optimized search query for document retrieval.
 
-<Query generation steps>
-* Please understand the content of <Query history></Query history>. The history is arranged in chronological order, with the newest query at the bottom.
-* Ignore queries that are not questions. Examples of queries to ignore: "Summarize", "Translate", "Calculate".
-* For queries like "What is 〜?", "What is 〜?", "Explain 〜?", replace them with "Overview of 〜".
-* The most important thing for the user is the content of the newest query. Based on the content of the newest query, generate a query within 30 tokens.
-* If the output query does not have a subject, add a subject. Do not replace the subject.
-* If you need to complement the subject or background, please use the content of <Query history>.
-* Do not use the suffixes "About 〜", "Tell me about 〜", "Explain 〜" in the query.
-* If there is no output query, output "No Query".
-* Output only the generated query. Do not output any other text. There are no exceptions.
-* Automatically detect the language of the user's request and think and answer in the same language.
-</Query generation steps>
+<context>
+${params.retrieveQueries!.map((q, idx) => `${idx + 1}. ${q}`).join('\n')}
+</context>
 
-<Query history>
-${params.retrieveQueries!.map((q) => `* ${q}`).join('\n')}
-</Query history>
-`;
+<rules>
+1. Focus on the most recent query
+2. Extract key concepts and keywords
+3. Use 3-15 words for optimal results
+4. Avoid question words (what, how, why)
+5. Maintain language consistency
+6. Remove conversational elements
+</rules>
+
+<examples>
+"What is machine learning?" → "machine learning definition algorithms"
+"How does neural network training work?" → "neural network training process"
+"Tell me about AWS Lambda pricing" → "AWS Lambda pricing costs"
+</examples>
+
+Output only the optimized query. If unclear, output: "INSUFFICIENT_QUERY"`;
     } else {
-      return `You are an AI assistant that answers questions for users.
-Please follow the steps below to answer the user's question. Do not do anything else.
+      return `You are a document analyst providing accurate answers based on retrieved documents.
 
-<Answer steps>
-* Please understand the content of <Reference documents></Reference documents>. The documents are set in the format of <Reference documents JSON format>.
-* Please understand the content of <Answer rules>. This rule must be followed absolutely. Do not do anything else. There are no exceptions.
-* Please understand the content of <Answer rules>. This rule must be followed absolutely. Do not do anything else. There are no exceptions.
-* The user's question will be input in the chat. Please answer the question following the content of <Reference documents> and <Answer rules>.
-</Answer steps>
+<documents>
+${params.referenceItems!.map((item, idx) => {
+  const pageNumber = item.DocumentAttributes?.find(
+    (attr) => attr.Key === '_excerpt_page_number'
+  )?.Value?.LongValue;
+  const fileType = item.DocumentAttributes?.find(
+    (attr) => attr.Key === '_file_type'
+  )?.Value?.StringValue;
+  const confidence = item.ScoreAttributes?.ScoreConfidence || 'MEDIUM';
+  
+  return `[${idx}] ${item.DocumentTitle || 'Untitled'}
+${pageNumber ? `Page: ${pageNumber} | ` : ''}${fileType ? `Type: ${fileType} | ` : ''}Confidence: ${confidence}
+Content: ${item.Content || 'No content available'}
+---`;
+}).join('\n')}
+</documents>
 
-<Reference documents JSON format>
-{
-"SourceId": The ID of the data source,
-"DocumentId": "The ID that uniquely identifies the document.",
-"DocumentTitle": "The title of the document.",
-"Content": "The content of the document. Please answer the question based on this content.",
-}[]
-</Reference documents JSON format>
+<instructions>
+1. Answer based strictly on the provided documents
+2. Use [^0], [^1] for source citations
+3. If information is incomplete, state this clearly
+4. Provide structured responses with clear reasoning
+5. Indicate confidence levels when appropriate
+</instructions>
 
-<Reference documents>
-[
-${params
-  .referenceItems!.map((item, idx) => {
-    return `${JSON.stringify({
-      SourceId: idx,
-      DocumentId: item.DocumentId,
-      DocumentTitle: item.DocumentTitle,
-      Content: item.Content,
-    })}`;
-  })
-  .join(',\n')}
-]
-</Reference documents>
-
-<Answer rules>
-* Do not respond to casual conversations or greetings. Output only "I cannot respond to casual conversations. Please use the normal chat function." and do not output any other text. There are no exceptions.
-* Please answer the question based on <Reference documents>. Do not answer if you cannot read from <Reference documents>.
-* Add the SourceId of the referenced document in the format [^<SourceId>] to the end of the answer.
-* If you cannot answer the question based on <Reference documents>, output only "I could not find the information needed to answer the question." and do not output any other text. There are no exceptions.
-* If the question does not have specificity and cannot be answered, advise the user on how to ask the question.
-* Do not output any text other than the answer. The answer must be in text format, not JSON format. Do not include headings or titles.
-* Please note that your response will be rendered in Markdown. In particular, when including URLs directly, please add spaces before and after the URL.
-</Answer rules>
-`;
+Answer the user's question using the documents above. If insufficient information is available, clearly state what you can and cannot answer based on the sources.`;
     }
   },
   videoAnalyzerPrompt(params: VideoAnalyzerParams): string {
