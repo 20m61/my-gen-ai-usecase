@@ -8,6 +8,7 @@ import { getPrompter } from '../prompts';
 import { RetrieveResultItem, DocumentAttribute } from '@aws-sdk/client-kendra';
 import { cleanEncode } from '../utils/URLUtils';
 import { useTranslation } from 'react-i18next';
+import { RAG_CONFIG, collectMetrics, RAGMetrics, ConfidenceLevel, DocumentType } from '../config/ragSettings';
 
 // Enhanced document metadata interface
 interface DocumentMetadata {
@@ -48,37 +49,68 @@ const extractDocumentMetadata = (item: RetrieveResultItem): DocumentMetadata => 
   };
 };
 
-// Calculate relevance score based on multiple factors
-const calculateRelevanceScore = (item: RetrieveResultItem): number => {
-  let score = 0;
+// 改善されたクエリ最適化エラーハンドリング
+const handleQueryOptimization = (rawQuery: string, originalQuery: string): string => {
+  const trimmed = rawQuery.trim();
   
-  // Base score from Kendra confidence
-  const confidence = item.ScoreAttributes?.ScoreConfidence;
-  switch (confidence) {
-    case 'VERY_HIGH': score += 4; break;
-    case 'HIGH': score += 3; break;
-    case 'MEDIUM': score += 2; break;
-    case 'LOW': score += 1; break;
-    default: score += 1;
+  if (trimmed === 'INSUFFICIENT_QUERY') {
+    console.warn('Query optimization returned INSUFFICIENT_QUERY', { originalQuery });
+    return originalQuery;
   }
   
-  // Content length factor (longer content may be more comprehensive)
-  const contentLength = item.Content?.length || 0;
-  if (contentLength > 1000) score += 2;
-  else if (contentLength > 500) score += 1;
-  else if (contentLength < 100) score -= 1; // Penalize very short content
+  if (trimmed.length < RAG_CONFIG.query.minLength) {
+    console.warn('Query optimization returned too short query', { 
+      optimized: trimmed, 
+      original: originalQuery,
+      minLength: RAG_CONFIG.query.minLength
+    });
+    return originalQuery;
+  }
   
-  // Document type factor (some types may be more reliable)
+  if (trimmed.length > RAG_CONFIG.query.maxLength) {
+    console.warn('Query optimization returned too long query', { 
+      optimized: trimmed,
+      maxLength: RAG_CONFIG.query.maxLength
+    });
+    return trimmed.substring(0, RAG_CONFIG.query.maxLength);
+  }
+  
+  return trimmed;
+};
+
+// 設定ベースのスコアリング計算
+const calculateRelevanceScore = (item: RetrieveResultItem): number => {
+  let score = 0;
+  const config = RAG_CONFIG.document.scoring;
+  
+  // Base score from Kendra confidence
+  const confidence = item.ScoreAttributes?.ScoreConfidence as ConfidenceLevel;
+  score += config.confidenceWeights[confidence] || config.confidenceWeights.LOW;
+  
+  // Content length factor
+  const contentLength = item.Content?.length || 0;
+  if (contentLength > config.contentLengthBonuses.long.threshold) {
+    score += config.contentLengthBonuses.long.bonus;
+  } else if (contentLength > config.contentLengthBonuses.medium.threshold) {
+    score += config.contentLengthBonuses.medium.bonus;
+  } else if (contentLength < config.contentLengthBonuses.short.threshold) {
+    score += config.contentLengthBonuses.short.penalty;
+  }
+  
+  // Document type factor
   const fileType = item.DocumentAttributes?.find(
     attr => attr.Key === '_file_type'
-  )?.Value?.StringValue;
-  if (fileType === 'pdf') score += 1; // PDFs often contain structured content
-  if (fileType === 'html') score += 0.5; // HTML may be less reliable
+  )?.Value?.StringValue as DocumentType;
+  if (fileType && config.documentTypeBonus[fileType] !== undefined) {
+    score += config.documentTypeBonus[fileType];
+  }
   
   // Title quality factor
-  if (item.DocumentTitle && item.DocumentTitle.length > 10) score += 0.5;
+  if (item.DocumentTitle && item.DocumentTitle.length > 10) {
+    score += config.titleQualityBonus;
+  }
   
-  return Math.max(0, score); // Ensure non-negative score
+  return Math.max(0, score);
 };
 
 // Sort items by relevance score
@@ -175,15 +207,15 @@ export const arrangeItems = (
 // Filter items based on quality thresholds
 export const filterQualityItems = (
   items: RetrieveResultItem[],
-  minContentLength: number = 50,
-  maxItems: number = 5
+  minContentLength: number = RAG_CONFIG.document.minContentLength,
+  maxItems: number = RAG_CONFIG.document.maxDocuments
 ): RetrieveResultItem[] => {
   return items
     .filter(item => {
       const contentLength = item.Content?.length || 0;
       return contentLength >= minContentLength;
     })
-    .slice(0, maxItems); // Limit to top N items
+    .slice(0, maxItems);
 };
 
 const useRag = (id: string) => {
@@ -232,8 +264,10 @@ const useRag = (id: string) => {
       pushMessage('user', content);
       pushMessage('assistant', t('rag.retrieving'));
 
-      // Generate optimized search query
+      // Generate optimized search query with improved error handling
       let query: string;
+      const startTime = Date.now();
+      
       try {
         const rawQuery = await predict({
           model: model,
@@ -249,15 +283,8 @@ const useRag = (id: string) => {
           id: id,
         });
         
-        query = rawQuery.trim();
-        
-        // Handle insufficient query case
-        if (query === 'INSUFFICIENT_QUERY' || query.length < 3) {
-          console.log('Query optimization failed, using original query');
-          query = content;
-        }
-        
-        console.log('Optimized query:', query);
+        query = handleQueryOptimization(rawQuery, content);
+        console.log('Optimized query:', { original: content, optimized: query });
       } catch (error) {
         console.error('Query optimization error:', error);
         query = content; // Fallback to original query
@@ -270,9 +297,23 @@ const useRag = (id: string) => {
         const arrangedItems = arrangeItems(retrievedItems.data.ResultItems ?? []);
         
         // Apply quality filtering to get the most relevant items
-        items = filterQualityItems(arrangedItems, 50, 5);
+        items = filterQualityItems(arrangedItems);
         
-        // Log document metadata for debugging (remove in production)
+        const processingTime = Date.now() - startTime;
+        
+        // Collect metrics
+        const metrics: RAGMetrics = {
+          queryOptimizationSuccess: query !== content,
+          documentsRetrieved: retrievedItems.data.ResultItems?.length || 0,
+          documentsAfterFiltering: items.length,
+          averageDocumentScore: items.reduce((sum, item) => sum + calculateRelevanceScore(item), 0) / items.length,
+          processingTime,
+          timestamp: new Date(),
+        };
+        
+        collectMetrics(metrics);
+        
+        // Log document metadata for debugging
         console.log('Retrieved documents:', items.map(item => ({
           title: item.DocumentTitle,
           score: calculateRelevanceScore(item),

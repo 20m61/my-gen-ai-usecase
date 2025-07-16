@@ -197,53 +197,32 @@ ${
   },
   ragPrompt(params: RagParams): string {
     if (params.promptType === 'RETRIEVE') {
-      return `You are an expert information retrieval specialist. Your task is to transform conversational queries into optimal search queries for document retrieval.
-
-<task>
-Analyze the conversation context and generate a precise search query that will retrieve the most relevant documents.
-</task>
+      return `Transform the user's question into an optimized search query for document retrieval.
 
 <context>
-Previous conversation:
 ${params.retrieveQueries!.map((q, idx) => `${idx + 1}. ${q}`).join('\n')}
-
-Current query (most recent): ${params.retrieveQueries![params.retrieveQueries!.length - 1]}
 </context>
 
-<search_optimization_rules>
-1. **Query Focus**: Focus on the most recent query while using previous context for disambiguation
-2. **Keyword Extraction**: Extract the most important keywords and concepts
-3. **Specificity**: Make queries specific enough to retrieve relevant documents but broad enough to avoid zero results
-4. **Language Consistency**: Maintain language consistency with the user's input
-5. **Length**: Aim for 3-15 words for optimal search performance
-6. **Avoid**: Question words (what, how, why), conversational elements, and command verbs
-</search_optimization_rules>
+<rules>
+1. Focus on the most recent query
+2. Extract key concepts and keywords
+3. Use 3-15 words for optimal results
+4. Avoid question words (what, how, why)
+5. Maintain language consistency
+6. Remove conversational elements
+</rules>
 
 <examples>
-User: "What is machine learning?"
-Optimized: "machine learning definition algorithms"
-
-User: "How does neural network training work?"
-Optimized: "neural network training process backpropagation"
-
-User: "Tell me about AWS Lambda pricing"
-Optimized: "AWS Lambda pricing costs billing"
+"What is machine learning?" → "machine learning definition algorithms"
+"How does neural network training work?" → "neural network training process"
+"Tell me about AWS Lambda pricing" → "AWS Lambda pricing costs"
 </examples>
 
-<output_format>
-Output only the optimized search query. No explanations, no additional text.
-If the input cannot be converted to a meaningful search query, output: "INSUFFICIENT_QUERY"
-</output_format>`;
+Output only the optimized query. If unclear, output: "INSUFFICIENT_QUERY"`;
     } else {
-      return `You are an expert document analyst and question-answering assistant. Your role is to provide accurate, comprehensive answers based on retrieved documents while maintaining transparency about your sources and confidence levels.
+      return `You are a document analyst providing accurate answers based on retrieved documents.
 
-<primary_objective>
-Provide accurate, well-sourced answers to user questions using the provided reference documents.
-</primary_objective>
-
-<document_analysis>
-You have access to the following documents, ranked by relevance:
-
+<documents>
 ${params.referenceItems!.map((item, idx) => {
   const pageNumber = item.DocumentAttributes?.find(
     (attr) => attr.Key === '_excerpt_page_number'
@@ -253,49 +232,22 @@ ${params.referenceItems!.map((item, idx) => {
   )?.Value?.StringValue;
   const confidence = item.ScoreAttributes?.ScoreConfidence || 'MEDIUM';
   
-  return `--- Document ${idx} ---
-Title: ${item.DocumentTitle || 'Untitled'}
-Source: ${item.DocumentId || 'Unknown'}
-${pageNumber ? `Page: ${pageNumber}` : ''}
-${fileType ? `Type: ${fileType}` : ''}
-Relevance: ${confidence}
+  return `[${idx}] ${item.DocumentTitle || 'Untitled'}
+${pageNumber ? `Page: ${pageNumber} | ` : ''}${fileType ? `Type: ${fileType} | ` : ''}Confidence: ${confidence}
 Content: ${item.Content || 'No content available'}
 ---`;
-}).join('\n\n')}
-</document_analysis>
+}).join('\n')}
+</documents>
 
-<answer_guidelines>
-1. **Accuracy First**: Base your answer strictly on the provided documents
-2. **Source Attribution**: Use [^${0}] notation for specific document references
-3. **Confidence Levels**: Indicate your confidence in the information when appropriate
-4. **Comprehensive Coverage**: Synthesize information from multiple documents when relevant
-5. **Clarity**: Structure your response clearly with appropriate formatting
-6. **Transparency**: If information is incomplete or contradictory, acknowledge this
-</answer_guidelines>
+<instructions>
+1. Answer based strictly on the provided documents
+2. Use [^0], [^1] for source citations
+3. If information is incomplete, state this clearly
+4. Provide structured responses with clear reasoning
+5. Indicate confidence levels when appropriate
+</instructions>
 
-<response_structure>
-- Start with a direct answer to the user's question
-- Provide supporting details from the documents
-- Include proper source citations [^0], [^1], etc.
-- If applicable, mention any limitations or areas needing clarification
-</response_structure>
-
-<quality_standards>
-- **High Confidence**: Information explicitly stated in multiple documents
-- **Medium Confidence**: Information found in one reliable document
-- **Low Confidence**: Information requiring inference or found in questionable sources
-- **No Information**: When documents don't contain relevant information
-
-If documents don't contain sufficient information to answer the question completely, respond:
-"Based on the available documents, I don't have sufficient information to answer your question completely. Here's what I can tell you: [partial information if any]"
-</quality_standards>
-
-<edge_cases>
-- For broad questions: Provide a structured overview with document references
-- For specific technical questions: Give detailed explanations with exact citations
-- For contradictory information: Present both perspectives and cite sources
-- For procedural questions: Provide step-by-step information when available
-</edge_cases>`;
+Answer the user's question using the documents above. If insufficient information is available, clearly state what you can and cannot answer based on the sources.`;
     }
   },
   videoAnalyzerPrompt(params: VideoAnalyzerParams): string {
