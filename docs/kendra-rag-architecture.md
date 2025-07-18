@@ -581,6 +581,11 @@ const calculateRelevanceScore = (item: RetrieveResultItem): number => {
 };
 ```
 
+**計算量とパフォーマンス**: 
+- **時間複雑度**: O(k) （kは文書あたりの属性数、通常5-10個）
+- **大量データ処理**: 1000件以上の文書では並列処理を推奨
+- **メモリ使用量**: 文書あたり約200-500バイト（メタデータ含む）
+
 #### スコア重み設定
 **ファイル**: `packages/web/src/config/ragSettings.ts:6-24`
 
@@ -613,6 +618,42 @@ export const RAG_CONFIG = {
       titleQualityBonus: 0.5, // 良質なタイトルのボーナス
     },
   },
+};
+```
+
+#### 用途別チューニング例
+
+**高精度重視設定**（正確性を最優先）:
+```typescript
+const HIGH_PRECISION_CONFIG = {
+  confidenceWeights: {
+    VERY_HIGH: 10, HIGH: 6, MEDIUM: 2, LOW: 0
+  },
+  documentTypeBonus: { pdf: 2, html: 0, txt: -1 }
+};
+```
+
+**高再現率設定**（情報の網羅性重視）:
+```typescript
+const HIGH_RECALL_CONFIG = {
+  confidenceWeights: {
+    VERY_HIGH: 4, HIGH: 3, MEDIUM: 3, LOW: 2
+  },
+  contentLengthBonuses: {
+    long: { threshold: 800, bonus: 1 },
+    medium: { threshold: 300, bonus: 0.5 },
+    short: { threshold: 150, penalty: 0 }
+  }
+};
+```
+
+**バランス型設定**（デフォルト推奨）:
+```typescript
+const BALANCED_CONFIG = {
+  confidenceWeights: {
+    VERY_HIGH: 4, HIGH: 3, MEDIUM: 2, LOW: 1
+  },
+  documentTypeBonus: { pdf: 1, html: 0.5, txt: 0 }
 };
 ```
 
