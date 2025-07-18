@@ -67,6 +67,8 @@ const Setting = () => {
     setSettingShowTools,
     settingShowEmail,
     setSettingShowEmail,
+    settingRagDebugMode,
+    setSettingRagDebugMode,
   } = useUserSetting();
 
   const onClickSignout = useCallback(() => {
@@ -168,6 +170,19 @@ const Setting = () => {
               onSwitch={setSettingShowEmail}
             />
           }></SettingItem>
+
+        {ragEnabled && (
+          <SettingItem
+            name={t('setting.items.rag_debug_mode')}
+            value={
+              <Switch
+                checked={settingRagDebugMode}
+                label=""
+                onSwitch={setSettingRagDebugMode}
+              />
+            }
+            helpMessage={t('setting.items.rag_debug_mode_help')}></SettingItem>
+        )}
 
         <SettingItem
           name={t('setting.items.login_status')}
