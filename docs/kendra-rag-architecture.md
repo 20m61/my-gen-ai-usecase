@@ -10,11 +10,12 @@
 2. [アーキテクチャ](#アーキテクチャ)
 3. [コンポーネント詳細](#コンポーネント詳細)
 4. [RAGワークフロー](#ragワークフロー)
-5. [プロンプト戦略](#プロンプト戦略)
-6. [設定管理](#設定管理)
-7. [セキュリティ](#セキュリティ)
-8. [運用・監視](#運用監視)
-9. [トラブルシューティング](#トラブルシューティング)
+5. [プロンプトエンジニアリング詳細](#プロンプトエンジニアリング詳細)
+6. [データ整形・処理アルゴリズム](#データ整形処理アルゴリズム)
+7. [設定管理](#設定管理)
+8. [セキュリティ](#セキュリティ)
+9. [運用・監視](#運用監視)
+10. [トラブルシューティング](#トラブルシューティング)
 
 ## システム概要
 
@@ -294,70 +295,537 @@ graph LR
 3. **ソース管理**: 回答の各部分に対するソース追跡
 4. **脚注生成**: 参照文書への自動リンク生成
 
-## プロンプト戦略
+## プロンプトエンジニアリング詳細
 
-### 1. 検索クエリ生成プロンプト
+### 1. 検索クエリ最適化プロンプト
 
-**ファイル**: `packages/web/src/prompts/claude.ts:198-219`
-
-```typescript
-const retrievePrompt = `You are an AI assistant that generates queries for document retrieval.
-Please generate a query following the <Query generation steps></Query generation steps>.
-
-<Query generation steps>
-* Please understand the content of <Query history></Query history>
-* Ignore queries that are not questions
-* For queries like "What is 〜?", replace them with "Overview of 〜"
-* Generate a query within 30 tokens based on the newest query
-* If the output query does not have a subject, add a subject
-* Use the content of <Query history> to complement the subject or background
-* Do not use the suffixes "About 〜", "Tell me about 〜", "Explain 〜"
-* Output only the generated query
-</Query generation steps>`;
-```
-
-**設計思想**:
-- **簡潔性**: 30トークン制限による効率的な検索
-- **文脈保持**: 会話履歴からの情報補完
-- **形式統一**: 疑問文を説明形式に変換
-
-### 2. 回答生成プロンプト
-
-**ファイル**: `packages/web/src/prompts/claude.ts:221-265`
+#### 現在の実装
+**ファイル**: `packages/web/src/prompts/claude.ts:198-221`
 
 ```typescript
-const answerPrompt = `You are an AI assistant that answers questions for users.
+ragPrompt(params: RagParams): string {
+  if (params.promptType === 'RETRIEVE') {
+    return `Transform the user's question into an optimized search query for document retrieval.
 
-<Answer rules>
-* Do not respond to casual conversations or greetings
-* Please answer based on <Reference documents>
-* Add the SourceId in the format [^<SourceId>] to the end of the answer
-* If you cannot answer based on <Reference documents>, output only "I could not find the information needed to answer the question."
-* Do not output any text other than the answer
-* Your response will be rendered in Markdown
-</Answer rules>`;
-```
+<context>
+${params.retrieveQueries!.map((q, idx) => `${idx + 1}. ${q}`).join('\n')}
+</context>
 
-**設計思想**:
-- **制約ベース**: 文書外の情報使用を明示的に禁止
-- **透明性**: すべての回答にソース情報を付与
-- **品質保証**: 情報不足時の明確なエラー応答
+<rules>
+1. Focus on the most recent query
+2. Extract key concepts and keywords
+3. Use 3-15 words for optimal results
+4. Avoid question words (what, how, why)
+5. Maintain language consistency
+6. Remove conversational elements
+</rules>
 
-### 3. 文書フォーマット
+<examples>
+"What is machine learning?" → "machine learning definition algorithms"
+"How does neural network training work?" → "neural network training process"
+"Tell me about AWS Lambda pricing" → "AWS Lambda pricing costs"
+</examples>
 
-```json
-{
-  "SourceId": 0,
-  "DocumentId": "document-123",
-  "DocumentTitle": "製品仕様書",
-  "Content": "本製品の仕様は以下の通りです..."
+Output only the optimized query. If unclear, output: "INSUFFICIENT_QUERY"`;
+  }
 }
 ```
 
-**特徴**:
-- **構造化**: JSON形式による明確な文書構造
-- **追跡可能**: SourceIdによる参照元管理
-- **メタデータ**: タイトルやIDによる文書識別
+#### プロンプト設計原則
+
+**1. 効率性重視**
+- **トークン制限**: 3-15単語に制限してKendraの効率的な検索を実現
+- **キーワード抽出**: 疑問詞を除去し、核となる概念を抽出
+- **言語一貫性**: 元の質問言語を維持
+
+**2. 文脈保持**
+```typescript
+// 会話履歴を番号付きリストで提供
+${params.retrieveQueries!.map((q, idx) => `${idx + 1}. ${q}`).join('\n')}
+```
+- 過去の質問から文脈を理解
+- 代名詞や省略された情報を補完
+- 連続する質問の関連性を維持
+
+**3. エラーハンドリング**
+```typescript
+// useRag.ts:52-79 でのフォールバック処理
+const handleQueryOptimization = (rawQuery: string, originalQuery: string): string => {
+  const trimmed = rawQuery.trim();
+  
+  if (trimmed === 'INSUFFICIENT_QUERY') {
+    console.warn('Query optimization returned INSUFFICIENT_QUERY', { originalQuery });
+    return originalQuery;
+  }
+  
+  if (trimmed.length < RAG_CONFIG.query.minLength) {
+    return originalQuery;
+  }
+  
+  if (trimmed.length > RAG_CONFIG.query.maxLength) {
+    return trimmed.substring(0, RAG_CONFIG.query.maxLength);
+  }
+  
+  return trimmed;
+};
+```
+
+### 2. 回答生成プロンプト
+
+#### 現在の実装
+**ファイル**: `packages/web/src/prompts/claude.ts:222-251`
+
+```typescript
+return `You are a document analyst providing accurate answers based on retrieved documents.
+
+<documents>
+${params.referenceItems!.map((item, idx) => {
+  const pageNumber = item.DocumentAttributes?.find(
+    (attr) => attr.Key === '_excerpt_page_number'
+  )?.Value?.LongValue;
+  const fileType = item.DocumentAttributes?.find(
+    (attr) => attr.Key === '_file_type'
+  )?.Value?.StringValue;
+  const confidence = item.ScoreAttributes?.ScoreConfidence || 'MEDIUM';
+  
+  return `[${idx}] ${item.DocumentTitle || 'Untitled'}
+${pageNumber ? `Page: ${pageNumber} | ` : ''}${fileType ? `Type: ${fileType} | ` : ''}Confidence: ${confidence}
+Content: ${item.Content || 'No content available'}
+---`;
+}).join('\n')}
+</documents>
+
+<instructions>
+1. Answer based strictly on the provided documents
+2. Use [^0], [^1] for source citations
+3. If information is incomplete, state this clearly
+4. Provide structured responses with clear reasoning
+5. Indicate confidence levels when appropriate
+</instructions>
+
+Answer the user's question using the documents above. If insufficient information is available, clearly state what you can and cannot answer based on the sources.`;
+```
+
+#### プロンプト設計原則
+
+**1. 制約ベース設計**
+- **文書限定**: "Answer based strictly on the provided documents"
+- **透明性**: すべての回答に必須の脚注 `[^0]`, `[^1]`
+- **誠実性**: 情報不足時の明確な表明
+
+**2. 構造化された文書提示**
+```typescript
+// 各文書にメタデータを付与
+`[${idx}] ${item.DocumentTitle || 'Untitled'}
+${pageNumber ? `Page: ${pageNumber} | ` : ''}${fileType ? `Type: ${fileType} | ` : ''}Confidence: ${confidence}
+Content: ${item.Content || 'No content available'}
+---`
+```
+
+**3. 品質指標の明示**
+- **信頼度**: Kendraの信頼度スコア表示
+- **ページ番号**: 具体的な参照位置
+- **ファイル形式**: 文書の種類情報
+
+### 3. プロンプト最適化テクニック
+
+#### A. コンテキスト長最適化
+```typescript
+// 文書内容の自動トランケーション（useRag.ts内）
+const maxDocumentLength = RAG_CONFIG.document.maxContentLength || 2000;
+const truncatedContent = item.Content?.length > maxDocumentLength 
+  ? item.Content.substring(0, maxDocumentLength) + '...'
+  : item.Content;
+```
+
+#### B. 動的プロンプト調整
+```typescript
+// 文書数に応じたプロンプト調整
+const documentCount = params.referenceItems!.length;
+const instructionIntensity = documentCount > 3 ? 'strictly' : 'carefully';
+```
+
+#### C. 言語別最適化
+```typescript
+// 日本語特化の指示追加
+const languageSpecificInstructions = kendraIndexLanguage === 'ja' 
+  ? '日本語の文脈と敬語を適切に使用してください。'
+  : '';
+```
+
+### 4. プロンプトバージョン管理
+
+#### テンプレート versioning
+```typescript
+const PROMPT_VERSION = '2.1';
+const PROMPT_TEMPLATES = {
+  'retrieve_v2.1': {
+    template: retrieveTemplate,
+    minWords: 3,
+    maxWords: 15,
+    fallbackStrategy: 'original'
+  },
+  'answer_v2.1': {
+    template: answerTemplate,
+    maxSources: 5,
+    citationFormat: '[^{index}]'
+  }
+};
+```
+
+#### A/Bテスト対応
+```typescript
+// プロンプトA/Bテスト実装例
+const promptVariant = Math.random() < 0.5 ? 'detailed' : 'concise';
+const selectedPrompt = PROMPT_VARIANTS[promptVariant];
+```
+
+### 5. エラーハンドリングとフォールバック
+
+#### プロンプト失敗時の対応
+```typescript
+// クエリ最適化失敗時
+if (rawQuery.includes('INSUFFICIENT_QUERY') || rawQuery.length < 3) {
+  // 元のクエリにフォールバック
+  query = content;
+  console.warn('Falling back to original query', { original: content });
+}
+```
+
+#### 回答品質チェック
+```typescript
+// 回答の品質チェック
+const isValidResponse = (response: string): boolean => {
+  return response.length > 10 && 
+         response.includes('[^') && 
+         !response.includes('INSUFFICIENT_INFO');
+};
+```
+
+## データ整形・処理アルゴリズム
+
+### 1. 文書検索結果の処理パイプライン
+
+#### 全体フロー
+```mermaid
+graph LR
+    A[Kendra検索結果] --> B[関連度スコア計算]
+    B --> C[文書グループ化]
+    C --> D[同一文書統合]
+    D --> E[品質フィルタリング]
+    E --> F[最終ソート]
+    F --> G[上位N件選択]
+```
+
+#### 実装コード概要
+**ファイル**: `packages/web/src/hooks/useRag.ts:187-219`
+
+```typescript
+export const arrangeItems = (items: RetrieveResultItem[]): RetrieveResultItem[] => {
+  if (items.length === 0) return [];
+  
+  // 1. 関連度スコアによるソート
+  const sortedItems = sortItemsByRelevance(items);
+  
+  // 2. 文書ソース別グループ化
+  const documentGroups = groupDocumentsBySource(sortedItems);
+  
+  // 3. 同一文書内の統合
+  const mergedItems = Object.values(documentGroups).map(group => {
+    return mergeDocumentItems(group);
+  });
+  
+  // 4. 最終的な関連度ソート
+  return sortItemsByRelevance(mergedItems);
+};
+```
+
+### 2. 関連度スコアリング算出アルゴリズム
+
+#### スコア算出ロジック
+**ファイル**: `packages/web/src/hooks/useRag.ts:82-114`
+
+```typescript
+const calculateRelevanceScore = (item: RetrieveResultItem): number => {
+  let score = 0;
+  const config = RAG_CONFIG.document.scoring;
+  
+  // A. Kendra信頼度による基本スコア
+  const confidence = item.ScoreAttributes?.ScoreConfidence as ConfidenceLevel;
+  score += config.confidenceWeights[confidence] || config.confidenceWeights.LOW;
+  
+  // B. 文書内容長による補正
+  const contentLength = item.Content?.length || 0;
+  if (contentLength > config.contentLengthBonuses.long.threshold) {
+    score += config.contentLengthBonuses.long.bonus;
+  } else if (contentLength > config.contentLengthBonuses.medium.threshold) {
+    score += config.contentLengthBonuses.medium.bonus;
+  } else if (contentLength < config.contentLengthBonuses.short.threshold) {
+    score += config.contentLengthBonuses.short.penalty;
+  }
+  
+  // C. 文書タイプによる補正
+  const fileType = item.DocumentAttributes?.find(
+    attr => attr.Key === '_file_type'
+  )?.Value?.StringValue as DocumentType;
+  if (fileType && config.documentTypeBonus[fileType] !== undefined) {
+    score += config.documentTypeBonus[fileType];
+  }
+  
+  // D. タイトル品質による補正
+  if (item.DocumentTitle && item.DocumentTitle.length > 10) {
+    score += config.titleQualityBonus;
+  }
+  
+  return Math.max(0, score);
+};
+```
+
+#### スコア重み設定
+**ファイル**: `packages/web/src/config/ragSettings.ts:6-24`
+
+```typescript
+export const RAG_CONFIG = {
+  document: {
+    scoring: {
+      // Kendra信頼度重み
+      confidenceWeights: {
+        VERY_HIGH: 4,  // 最高信頼度
+        HIGH: 3,       // 高信頼度
+        MEDIUM: 2,     // 中信頼度
+        LOW: 1,        // 低信頼度
+      },
+      
+      // 文書長による補正
+      contentLengthBonuses: {
+        long: { threshold: 1000, bonus: 2 },    // 長文書にボーナス
+        medium: { threshold: 500, bonus: 1 },   // 中程度文書に小ボーナス
+        short: { threshold: 100, penalty: -1 }, // 短文書にペナルティ
+      },
+      
+      // 文書タイプによる補正
+      documentTypeBonus: {
+        pdf: 1,     // PDF文書を優遇
+        html: 0.5,  // HTML文書を若干優遇
+        txt: 0,     // テキスト文書は補正なし
+      },
+      
+      titleQualityBonus: 0.5, // 良質なタイトルのボーナス
+    },
+  },
+};
+```
+
+### 3. 文書統合アルゴリズム
+
+#### 同一文書検出
+**ファイル**: `packages/web/src/hooks/useRag.ts:177-184`
+
+```typescript
+const uniqueKeyOfItem = (item: RetrieveResultItem): string => {
+  const pageNumber = item.DocumentAttributes?.find(
+    (a: DocumentAttribute) => a.Key === '_excerpt_page_number'
+  )?.Value?.LongValue ?? '';
+  const uri = item.DocumentURI || item.DocumentId || 'unknown';
+  return `${uri}_${pageNumber}`;
+};
+```
+
+#### 文書グループ化
+**ファイル**: `packages/web/src/hooks/useRag.ts:126-138`
+
+```typescript
+const groupDocumentsBySource = (items: RetrieveResultItem[]): Record<string, RetrieveResultItem[]> => {
+  const groups: Record<string, RetrieveResultItem[]> = {};
+  
+  items.forEach(item => {
+    const sourceKey = item.DocumentURI || item.DocumentId || 'unknown';
+    if (!groups[sourceKey]) {
+      groups[sourceKey] = [];
+    }
+    groups[sourceKey].push(item);
+  });
+  
+  return groups;
+};
+```
+
+#### インテリジェント統合
+**ファイル**: `packages/web/src/hooks/useRag.ts:141-174`
+
+```typescript
+const mergeDocumentItems = (items: RetrieveResultItem[]): RetrieveResultItem => {
+  if (items.length === 1) return items[0];
+  
+  // 1. ページ番号順でソート
+  const sortedItems = items.sort((a, b) => {
+    const pageA = a.DocumentAttributes?.find(attr => attr.Key === '_excerpt_page_number')?.Value?.LongValue || 0;
+    const pageB = b.DocumentAttributes?.find(attr => attr.Key === '_excerpt_page_number')?.Value?.LongValue || 0;
+    return pageA - pageB;
+  });
+  
+  // 2. 最高関連度アイテムをベースに選択
+  const baseItem = sortedItems.reduce((prev, current) => {
+    return calculateRelevanceScore(current) > calculateRelevanceScore(prev) ? current : prev;
+  });
+  
+  // 3. 文書内容を文脈情報付きで統合
+  const mergedContent = sortedItems
+    .map((item, index) => {
+      const pageNumber = item.DocumentAttributes?.find(
+        attr => attr.Key === '_excerpt_page_number'
+      )?.Value?.LongValue;
+      
+      const prefix = pageNumber ? `[Page ${pageNumber}] ` : '';
+      const separator = index > 0 ? '\n\n...\n\n' : '';
+      
+      return separator + prefix + (item.Content || '');
+    })
+    .join('');
+  
+  return {
+    ...baseItem,
+    Content: mergedContent,
+  };
+};
+```
+
+### 4. 品質フィルタリング
+
+#### フィルタリング実装
+**ファイル**: `packages/web/src/hooks/useRag.ts:208-219`
+
+```typescript
+export const filterQualityItems = (
+  items: RetrieveResultItem[],
+  minContentLength: number = RAG_CONFIG.document.minContentLength,
+  maxItems: number = RAG_CONFIG.document.maxDocuments
+): RetrieveResultItem[] => {
+  return items
+    .filter(item => {
+      const contentLength = item.Content?.length || 0;
+      return contentLength >= minContentLength;
+    })
+    .slice(0, maxItems);
+};
+```
+
+#### 品質基準設定
+```typescript
+// packages/web/src/config/ragSettings.ts:3-5
+document: {
+  minContentLength: 50,  // 最小文書長（文字数）
+  maxDocuments: 5,       // 最大文書数
+}
+```
+
+### 5. メタデータ抽出・拡張
+
+#### 文書メタデータ構造
+**ファイル**: `packages/web/src/hooks/useRag.ts:13-23`
+
+```typescript
+interface DocumentMetadata {
+  documentType: string;    // 文書タイプ (pdf, html, txt)
+  lastModified?: string;   // 最終更新日時
+  pageNumber?: number;     // ページ番号
+  confidence: string;      // 信頼度レベル
+  language: string;        // 文書言語
+  sourceUri?: string;      // ソースURI
+  contentLength: number;   // 内容文字数
+  relevanceScore: number;  // 算出関連度スコア
+}
+```
+
+#### メタデータ抽出処理
+**ファイル**: `packages/web/src/hooks/useRag.ts:26-50`
+
+```typescript
+const extractDocumentMetadata = (item: RetrieveResultItem): DocumentMetadata => {
+  const attributes = item.DocumentAttributes || [];
+  
+  const getAttributeValue = (key: string): string | number | undefined => {
+    const attr = attributes.find(a => a.Key === key);
+    return attr?.Value?.StringValue || attr?.Value?.LongValue;
+  };
+
+  const contentLength = item.Content?.length || 0;
+  const confidence = item.ScoreAttributes?.ScoreConfidence || 'MEDIUM';
+  const relevanceScore = calculateRelevanceScore(item);
+
+  return {
+    documentType: getAttributeValue('_file_type') as string || 'text',
+    lastModified: getAttributeValue('_modified_at') as string,
+    pageNumber: getAttributeValue('_excerpt_page_number') as number,
+    confidence: confidence.toLowerCase(),
+    language: getAttributeValue('_language_code') as string || 'unknown',
+    sourceUri: getAttributeValue('_source_uri') as string,
+    contentLength,
+    relevanceScore,
+  };
+};
+```
+
+### 6. パフォーマンス最適化
+
+#### 処理時間測定
+**ファイル**: `packages/web/src/hooks/useRag.ts:89, 122-134`
+
+```typescript
+const startTime = Date.now();
+// ... 処理実行 ...
+const processingTime = Date.now() - startTime;
+
+// メトリクス収集
+const metrics: RAGMetrics = {
+  queryOptimizationSuccess: query !== content,
+  documentsRetrieved: retrievedItems.data.ResultItems?.length || 0,
+  documentsAfterFiltering: items.length,
+  averageDocumentScore: items.reduce((sum, item) => sum + calculateRelevanceScore(item), 0) / items.length,
+  processingTime,
+  timestamp: new Date(),
+};
+
+collectMetrics(metrics);
+```
+
+#### メモリ効率化
+```typescript
+// 大きな文書の遅延処理
+const processLargeDocument = async (item: RetrieveResultItem) => {
+  if (item.Content && item.Content.length > 10000) {
+    // チャンク分割処理
+    return await processInChunks(item.Content);
+  }
+  return item.Content;
+};
+```
+
+### 7. エラーハンドリング・復旧
+
+#### 文書処理エラー対応
+```typescript
+const safeDocumentProcessing = (items: RetrieveResultItem[]): RetrieveResultItem[] => {
+  try {
+    return arrangeItems(items);
+  } catch (error) {
+    console.error('Document processing failed:', error);
+    // フォールバック: 元の結果をそのまま返す
+    return items.slice(0, RAG_CONFIG.document.maxDocuments);
+  }
+};
+```
+
+#### データ整合性チェック
+```typescript
+const validateDocumentIntegrity = (item: RetrieveResultItem): boolean => {
+  return !!(
+    item.Content && 
+    item.Content.length > 0 && 
+    (item.DocumentURI || item.DocumentId)
+  );
+};
+```
 
 ## 設定管理
 
