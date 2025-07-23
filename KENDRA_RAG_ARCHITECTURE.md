@@ -1,5 +1,13 @@
 # Amazon Kendra RAG Chat システム構成とプロンプト解説
 
+## 更新履歴
+
+- **v4.3.2** (2025年7月): 現在のバージョン
+  - 高度な文書スコアリングシステムの実装
+  - プロンプト戦略の大幅改善（Claude最適化）
+  - 文書マージロジックの高度化
+- **v0.0.6** (初期バージョン): 基本的なKendra検索機能のみ
+
 ## 1. システム概要
 
 Amazon Kendraを使用したRAG（Retrieval-Augmented Generation）チャットシステムは、ユーザーの質問に対して関連文書を検索し、それらを基に精度の高い回答を生成する仕組みです。
@@ -176,32 +184,44 @@ export const predict = async (params: PredictParams): Promise<string> => {
 };
 ```
 
-### 4.3 検索クエリ生成プロンプト
+### 4.3 検索クエリ生成プロンプト（改善版）
 
 #### 📄 `/packages/web/src/prompts/claude.ts` - プロンプトテンプレート定義
 
 ```typescript
-// RETRIEVE用プロンプトテンプレート（290-315行目付近）
+// RETRIEVE用プロンプトテンプレート（199-221行目）
 ragPrompt(params: RagParams): string {
   if (params.promptType === 'RETRIEVE') {
-    return `あなたは文書検索のためのクエリを生成するAIアシスタントです。
-<クエリ生成手順>に従ってクエリを生成してください。
+    return `You are a search query optimization expert. Transform the user's conversational query into an effective search query for document retrieval.
 
-<クエリ生成手順>
-* <クエリ履歴>の内容を理解してください
-* 「〜とは何ですか？」のような質問は「〜の概要」に置き換えてください
-* 最新のクエリを基に30トークン以内でクエリを生成してください
-* 主語の補完が必要な場合は、<クエリ履歴>の内容を使用してください
-* 「〜について」「〜を教えて」「〜を説明して」などの接尾語は使用しないでください
-* 生成されたクエリのみを出力してください
-</クエリ生成手順>
+# Task
+Focus on the most recent query while considering conversation history for context. Extract key concepts and keywords that will find the most relevant documents.
 
-<クエリ履歴>
-${params.retrieveQueries!.map((q) => `* ${q}`).join('\n')}
-</クエリ履歴>`;
+# Guidelines
+- Output 3-15 words capturing the main topic
+- Focus on nouns, technical terms, and specific concepts
+- Remove question words (what, how, why, etc.) and conversational elements
+- Use the exact language of the input query
+- If the query is unclear or too vague, return "INSUFFICIENT_QUERY"
+
+# Examples
+Input: "What is machine learning?"
+Output: machine learning overview concepts
+
+Input: "How do I implement authentication in React?"
+Output: React authentication implementation methods
+
+# Conversation History
+${params.retrieveQueries!.map((q) => `- ${q}`).join('\n')}`;
   }
 }
 ```
+
+**改善点**:
+- **Claude最適化**: タスク指向の明確な指示
+- **柔軟な長さ**: 30トークン制限から3-15単語へ
+- **具体例の追加**: 変換パターンの明示
+- **エラーハンドリング**: `INSUFFICIENT_QUERY`フォールバック
 
 #### 📄 `/packages/types/src/chat.d.ts` - 型定義
 
@@ -267,36 +287,89 @@ export const retrieve = async (query: string): Promise<RetrieveResponse> => {
 };
 ```
 
-### 4.5 文書の重複除去処理
+### 4.5 文書の重複除去処理（高度化版）
 
 #### 📄 `/packages/web/src/hooks/useRag.ts` - 文書統合処理
 
 ```typescript
-// 同じ文書・ページの内容をマージ（190-210行目付近）
-const uniqueKeyOfItem = (item: RetrieveResultItem): string => {
-  const pageNumber = item.DocumentAttributes?.find(
-    (a: DocumentAttribute) => a.Key === '_excerpt_page_number'
-  )?.Value?.LongValue ?? '';
-  const uri = item.DocumentURI;
-  return `${uri}_${pageNumber}`;
+// 文書スコアリングと統合処理
+import { ragSettings } from '../config/ragSettings';
+
+// 関連性スコアの計算
+const calculateRelevanceScore = (item: RetrieveResultItem): number => {
+  let score = 0;
+  
+  // 基本スコア（Kendraの信頼度）
+  const confidence = item.ScoreAttributes?.ScoreConfidence;
+  score += ragSettings.scoring.confidenceWeights[confidence || 'MEDIUM'];
+  
+  // コンテンツ長によるボーナス
+  const contentLength = item.Content?.length || 0;
+  if (contentLength > 1000) score += ragSettings.scoring.lengthBonus.long;
+  else if (contentLength > 500) score += ragSettings.scoring.lengthBonus.medium;
+  else if (contentLength < 100) score += ragSettings.scoring.lengthBonus.short;
+  
+  // 文書タイプによるボーナス
+  const fileType = item.DocumentAttributes?.find(a => a.Key === '_file_type')?.Value?.StringValue;
+  score += ragSettings.scoring.documentTypeBonus[fileType || 'txt'] || 0;
+  
+  // タイトルの質によるボーナス
+  if (item.DocumentTitle && item.DocumentTitle.length > 10) {
+    score += ragSettings.scoring.titleQualityBonus;
+  }
+  
+  return score;
 };
 
+// 文書の統合とフィルタリング
 export const arrangeItems = (items: RetrieveResultItem[]): RetrieveResultItem[] => {
-  const res: Record<string, RetrieveResultItem> = {};
+  // 品質フィルタリング
+  const qualityItems = items.filter(item => 
+    (item.Content?.length || 0) >= ragSettings.qualityThresholds.minContentLength
+  );
   
-  for (const item of items) {
-    const key = uniqueKeyOfItem(item);
-    if (res[key]) {
-      // 同じソースの内容は「...」で連結
-      res[key].Content += ' ... ' + item.Content;
+  // スコア計算と並び替え
+  const scoredItems = qualityItems.map(item => ({
+    ...item,
+    relevanceScore: calculateRelevanceScore(item)
+  })).sort((a, b) => b.relevanceScore - a.relevanceScore);
+  
+  // 同一文書のマージ
+  const mergedItems: Record<string, RetrieveResultItem> = {};
+  
+  for (const item of scoredItems) {
+    const uri = item.DocumentURI || '';
+    
+    if (mergedItems[uri]) {
+      // ページ番号を保持しながらマージ
+      const pageNum = item.DocumentAttributes?.find(
+        a => a.Key === '_excerpt_page_number'
+      )?.Value?.LongValue;
+      
+      const pagePrefix = pageNum ? `[Page ${pageNum}] ` : '';
+      mergedItems[uri].Content += `\n\n${pagePrefix}${item.Content}`;
+      
+      // 最高スコアを保持
+      if (item.relevanceScore > mergedItems[uri].relevanceScore) {
+        mergedItems[uri].relevanceScore = item.relevanceScore;
+      }
     } else {
-      res[key] = item;
+      mergedItems[uri] = item;
     }
   }
   
-  return Object.values(res);
+  // 最終的な文書数の制限
+  return Object.values(mergedItems)
+    .sort((a, b) => b.relevanceScore - a.relevanceScore)
+    .slice(0, ragSettings.maxDocuments);
 };
 ```
+
+**改善点**:
+- **マルチファクタースコアリング**: 信頼度、長さ、文書タイプ、タイトル品質
+- **品質フィルタリング**: 短すぎる文書の除外
+- **インテリジェントマージ**: ページ番号を保持した文書統合
+- **設定の外部化**: `ragSettings`による柔軟な調整
 
 #### 📄 `/packages/types/src/chat.d.ts` - 検索結果の型定義
 
@@ -358,55 +431,53 @@ const postMessage = useCallback(
 );
 ```
 
-### 4.7 システムコンテキスト用プロンプト
+### 4.7 システムコンテキスト用プロンプト（改善版）
 
 #### 📄 `/packages/web/src/prompts/claude.ts` - RAGシステムの核となるプロンプト
 
 ```typescript
-// SYSTEM_CONTEXT用プロンプトテンプレート（320-365行目付近）
+// SYSTEM_CONTEXT用プロンプトテンプレート（223-251行目）
 ragPrompt(params: RagParams): string {
   if (params.promptType === 'SYSTEM_CONTEXT') {
-    return `あなたはユーザーの質問に回答するAIアシスタントです。
-以下の手順に従ってユーザーの質問に回答してください。
+    return `You are a document analyst providing accurate answers based solely on provided reference documents.
 
-<回答手順>
-* <参考文書>の内容を理解してください
-* <回答ルール>の内容を理解してください
-* ユーザーの質問がチャットで入力されます
-</回答手順>
+# Task
+Answer the user's question using ONLY information from the reference documents below. Include citations for all facts.
 
-<参考文書のJSONフォーマット>
-{
-"SourceId": データソースのID,
-"DocumentId": "文書を一意に識別するID",
-"DocumentTitle": "文書のタイトル",
-"Content": "文書の内容。この内容に基づいて回答してください。",
-}[]
-</参考文書のJSONフォーマット>
-
-<参考文書>
-[
+# Reference Documents
 ${params.referenceItems!.map((item, idx) => {
-  return `${JSON.stringify({
-    SourceId: idx,
-    DocumentId: item.DocumentId,
-    DocumentTitle: item.DocumentTitle,
-    Content: item.Content,
-  })}`;
-}).join(',\n')}
-]
-</参考文書>
+  const metadata = [];
+  if (item.DocumentAttributes) {
+    const pageNum = item.DocumentAttributes.find(a => a.Key === '_excerpt_page_number')?.Value?.LongValue;
+    const fileType = item.DocumentAttributes.find(a => a.Key === '_file_type')?.Value?.StringValue;
+    if (pageNum) metadata.push(`Page ${pageNum}`);
+    if (fileType) metadata.push(fileType.toUpperCase());
+  }
+  const confidence = item.ScoreAttributes?.ScoreConfidence || 'MEDIUM';
+  metadata.push(`Confidence: ${confidence}`);
+  
+  return `[Document ${idx}]
+Title: ${item.DocumentTitle}
+Metadata: ${metadata.join(', ')}
+Content: ${item.Content}`;
+}).join('\n\n')}
 
-<回答ルール>
-* <参考文書>に基づいて質問に回答してください
-* 参考にした文書のSourceIdを[^<SourceId>]の形式で追加してください
-* <参考文書>で回答できない場合は「質問に回答するために必要な情報を見つけることができませんでした。」と出力してください
-* 回答以外のテキストは出力しないでください
-* 回答はMarkdownで描画されることに注意してください
-</回答ルール>`;
+# Response Guidelines
+- Use information ONLY from the reference documents
+- Add citations [^0], [^1], etc. for each fact or quote
+- If confidence is LOW, mention this when using that source
+- Structure your response clearly with paragraphs or bullet points as appropriate
+- If you cannot answer from the documents, say: "I could not find sufficient information in the provided documents to answer this question."
+- Your response will be rendered in Markdown`;
   }
 }
 ```
+
+**改善点**:
+- **メタデータ活用**: ページ番号、ファイルタイプ、信頼度レベル
+- **構造化された文書表示**: より読みやすい形式
+- **信頼度の明示**: LOW信頼度の場合の注意喚起
+- **柔軟な回答形式**: 段落や箇条書きの使用を推奨
 
 #### 📄 `/packages/web/src/prompts/index.ts` - プロンプト管理
 
@@ -886,13 +957,44 @@ costAlarm.addAlarmAction(new actions.SnsAction(costTopic));
 
 ---
 
+## 9. プロンプト戦略の進化
+
+### 9.1 バージョン間の比較
+
+| 機能 | v0.0.6 | v4.3.2 (現在) |
+|------|---------|---------------|
+| クエリ最適化 | 30トークン制限のみ | 3-15単語の柔軟な最適化 |
+| プロンプト言語 | 日本語/英語混在 | 言語統一、Claude最適化 |
+| 文書スコアリング | なし | マルチファクター計算 |
+| エラーハンドリング | 基本的 | INSUFFICIENT_QUERYフォールバック |
+| メタデータ活用 | 最小限 | ページ番号、信頼度、ファイルタイプ |
+| 文書マージ | 単純な連結 | インテリジェントマージ |
+
+### 9.2 現在の最適化技術
+
+1. **クエリ最適化パイプライン**
+   - 会話履歴の文脈理解
+   - キーワード抽出とノイズ除去
+   - 言語一貫性の保持
+
+2. **文書処理パイプライン**
+   - 関連性スコアリング（4要素）
+   - 品質フィルタリング
+   - コンテキスト保持型マージ
+
+3. **回答生成パイプライン**
+   - メタデータ強化型プロンプト
+   - 信頼度レベルの明示
+   - 構造化された引用管理
+
 ## 📋 ファイル別機能マップ
 
 ### フロントエンド
-- **`useRag.ts`**: RAGフローの制御、2段階処理、脚注生成
+- **`useRag.ts`**: RAGフローの制御、2段階処理、脚注生成、スコアリング
 - **`useRagApi.ts`**: バックエンドAPI通信
-- **`claude.ts`**: 全プロンプトテンプレート
+- **`claude.ts`**: 全プロンプトテンプレート（改善版）
 - **`RagPage.tsx`**: RAGチャットUI
+- **`ragSettings.ts`**: スコアリング設定、品質閾値（新規）
 
 ### バックエンド
 - **`retrieveKendra.ts`**: Kendra検索実行
@@ -907,4 +1009,7 @@ costAlarm.addAlarmAction(new actions.SnsAction(costTopic));
 ### 型定義
 - **`chat.d.ts`**: 全型定義
 
-この構成により、高精度で信頼性の高いRAGチャットシステムを実現しています。各処理がどのファイルで実装されているかを把握することで、効率的なカスタマイズや拡張が可能になります。
+### テスト
+- **`useRag.test.ts`**: 文書処理ロジックのテスト（新規）
+
+この構成により、高精度で信頼性の高いRAGチャットシステムを実現しています。v0.0.6から大幅に進化し、エンタープライズグレードの文書検索と回答生成が可能になりました。
