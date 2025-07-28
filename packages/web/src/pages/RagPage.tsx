@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import InputChatContent from '../components/InputChatContent';
 import { create } from 'zustand';
 import useChat from '../hooks/useChat';
@@ -10,11 +10,12 @@ import ScrollTopBottom from '../components/ScrollTopBottom';
 import useFollow from '../hooks/useFollow';
 import BedrockIcon from '../assets/bedrock.svg?react';
 import KendraIcon from '../assets/kendra.svg?react';
-import { PiPlus } from 'react-icons/pi';
+import { PiPlus, PiChartBar } from 'react-icons/pi';
 import { RagPageQueryParams } from '../@types/navigate';
 import { MODELS } from '../hooks/useModel';
 import queryString from 'query-string';
 import { useTranslation } from 'react-i18next';
+import RAGMetricsDashboard from '../components/RAGMetricsDashboard';
 
 type StateType = {
   content: string;
@@ -37,11 +38,13 @@ const RagPage: React.FC = () => {
   const { content, setContent } = useRagPageState();
   const { pathname, search } = useLocation();
   const { getModelId, setModelId, forceToStop } = useChat(pathname);
-  const { postMessage, clear, loading, writing, messages, isEmpty } =
+  const { postMessage, clear, loading, writing, messages, isEmpty, getPerformanceStats } =
     useRag(pathname);
   const { scrollableContainer, setFollowing } = useFollow();
   const { modelIds: availableModels, modelDisplayName } = MODELS;
   const modelId = getModelId();
+  const [showMetrics, setShowMetrics] = useState(false);
+  const [performanceStats, setPerformanceStats] = useState(() => getPerformanceStats());
 
   useEffect(() => {
     const _modelId = !modelId ? availableModels[0] : modelId;
@@ -70,6 +73,10 @@ const RagPage: React.FC = () => {
     setContent('');
   }, [clear, setContent]);
 
+  const refreshMetrics = useCallback(() => {
+    setPerformanceStats(getPerformanceStats());
+  }, [getPerformanceStats]);
+
   const onStop = useCallback(() => {
     forceToStop();
   }, [forceToStop]);
@@ -82,13 +89,26 @@ const RagPage: React.FC = () => {
         </div>
 
         <div className="mt-2 flex w-full items-end justify-center lg:mt-0">
-          <Select
-            value={modelId}
-            onChange={setModelId}
-            options={availableModels.map((m) => {
-              return { value: m, label: modelDisplayName(m) };
-            })}
-          />
+          <div className="flex items-center space-x-4">
+            <Select
+              value={modelId}
+              onChange={setModelId}
+              options={availableModels.map((m) => {
+                return { value: m, label: modelDisplayName(m) };
+              })}
+            />
+            <button
+              onClick={() => setShowMetrics(!showMetrics)}
+              className={`p-2 rounded-lg transition-colors ${
+                showMetrics 
+                  ? 'bg-blue-100 text-blue-700' 
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+              title="Toggle RAG Metrics"
+            >
+              <PiChartBar className="text-lg" />
+            </button>
+          </div>
         </div>
 
         {isEmpty && (
@@ -98,6 +118,16 @@ const RagPage: React.FC = () => {
               <PiPlus className="text-2xl text-gray-400" />
               <BedrockIcon className="fill-gray-400" />
             </div>
+          </div>
+        )}
+
+        {/* RAG Metrics Dashboard */}
+        {showMetrics && (
+          <div className="mx-4 mb-4">
+            <RAGMetricsDashboard
+              performanceStats={performanceStats}
+              onRefresh={refreshMetrics}
+            />
           </div>
         )}
 
@@ -126,6 +156,8 @@ const RagPage: React.FC = () => {
             onSend={() => {
               if (!loading) {
                 onSend();
+                // メトリクス更新
+                setTimeout(refreshMetrics, 1000);
               } else {
                 onStop();
               }
