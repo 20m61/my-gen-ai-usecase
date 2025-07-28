@@ -44,6 +44,7 @@ import GenerateDiagramPage from './pages/GenerateDiagramPage.tsx';
 import WriterPage from './pages/WriterPage.tsx';
 import useUseCases from './hooks/useUseCases';
 import { Toaster } from 'sonner';
+import EnhancedRagTester from './components/EnhancedRagTester';
 
 const ragEnabled: boolean = import.meta.env.VITE_APP_RAG_ENABLED === 'true';
 const ragKnowledgeBaseEnabled: boolean =
@@ -173,6 +174,13 @@ const routes: RouteObject[] = [
     ? {
         path: '/rag-knowledge-base',
         element: <RagKnowledgeBasePage />,
+      }
+    : null,
+  // Enhanced RAG Tester (Development only)
+  import.meta.env.NODE_ENV === 'development' && ragEnabled
+    ? {
+        path: '/test-rag',
+        element: <EnhancedRagTester />,
       }
     : null,
   agentEnabled && !inlineAgents

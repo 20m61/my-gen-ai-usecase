@@ -58,7 +58,7 @@ const RagPage: React.FC = () => {
   const { postMessage, clear, loading, writing, messages, isEmpty, getPerformanceStats } = rag;
   const { scrollableContainer, setFollowing } = useFollow();
   const { modelIds: availableModels, modelDisplayName } = MODELS;
-  const { userContext } = useUserContext();
+  const { userContext: _userContext } = useUserContext();
   const modelId = getModelId();
   
   // UI state

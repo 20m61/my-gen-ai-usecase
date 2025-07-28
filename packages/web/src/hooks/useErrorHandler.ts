@@ -29,7 +29,7 @@ const useErrorHandler = (retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG) => {
   const [retryAttempts, setRetryAttempts] = useState<Map<string, number>>(new Map());
 
   // Parse error and return structured error info
-  const parseError = useCallback((error: any, context?: string): ErrorInfo => {
+  const parseError = useCallback((error: any, _context?: string): ErrorInfo => {
     // Handle Axios errors
     if (error.response) {
       const { status, data } = error.response;

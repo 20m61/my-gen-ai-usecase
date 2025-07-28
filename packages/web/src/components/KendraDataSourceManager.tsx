@@ -3,7 +3,7 @@ import { useKendraDataSources, KendraDataSource, DataSourceSyncJob } from '../ho
 import { 
   PiDatabase, 
   PiGlobe, 
-  PiRefresh, 
+  PiArrowClockwise, 
   PiPlay, 
   PiInfo, 
   PiWarningCircle,
@@ -250,7 +250,7 @@ const KendraDataSourceManager: React.FC<KendraDataSourceManagerProps> = ({
             disabled={loading || refreshing}
             className="flex items-center space-x-2 px-3 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition-colors disabled:opacity-50"
           >
-            <PiRefresh className={refreshing ? 'animate-spin' : ''} />
+            <PiArrowClockwise className={refreshing ? 'animate-spin' : ''} />
             <span>Refresh</span>
           </button>
         </div>

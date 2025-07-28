@@ -56,7 +56,7 @@ interface OptimizationState {
 
 const useOptimizationStore = create<OptimizationState>()(
   persist(
-    (set, get) => ({
+    (_set, _get) => ({
       cache: new Map(),
       queryQueue: [],
       isProcessing: false,
@@ -290,8 +290,8 @@ const useRagOptimized = (id: string) => {
     }
     
     // Execute query with security context
-    const userContext = getKendraUserContext();
-    const accessFilter = buildAccessControlFilter();
+    // const userContext = getKendraUserContext();
+    // const accessFilter = buildAccessControlFilter();
     
     // Modify the base RAG to include security context
     await baseRag.postMessage(content);
@@ -309,7 +309,7 @@ const useRagOptimized = (id: string) => {
       return;
     }
     
-    const chunks = [];
+    const chunks: string[] = [];
     const chunkSize = OPTIMIZATION_CONFIG.streaming.chunkSize;
     
     for (let i = 0; i < response.length; i += chunkSize) {

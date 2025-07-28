@@ -186,7 +186,7 @@ export const useRagMetrics = () => {
 
     // 最も一般的なクエリパターンの抽出
     const queryTerms = allMetrics.flatMap(m => 
-      m.originalQuery.toLowerCase().split(/\s+/).filter(term => term.length > 3)
+      m.originalQuery.toLowerCase().split(/\s+/).filter((term: string) => term.length > 3)
     );
     const termCounts = queryTerms.reduce((counts, term) => {
       counts[term] = (counts[term] || 0) + 1;
@@ -194,7 +194,7 @@ export const useRagMetrics = () => {
     }, {} as Record<string, number>);
     
     const mostCommonQueries = Object.entries(termCounts)
-      .sort(([, a], [, b]) => b - a)
+      .sort(([, a], [, b]) => (b as number) - (a as number))
       .slice(0, 10)
       .map(([term]) => term);
 

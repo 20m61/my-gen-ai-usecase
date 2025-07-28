@@ -1,7 +1,8 @@
-import { Auth } from 'aws-amplify';
+import { fetchAuthSession } from 'aws-amplify/auth';
 import axios, { AxiosResponse } from 'axios';
 import { RetrieveResultItem, QueryResultItem, FacetResult } from '@aws-sdk/client-kendra';
 import { create } from 'zustand';
+import { mockRagApiService, shouldUseMockService } from '../services/mockRagApiService';
 
 // Enhanced API types
 export interface EnhancedKendraRequest {
@@ -116,9 +117,8 @@ const useRagApiEnhanced = () => {
   const retrieveEnhanced = async (
     request: EnhancedKendraRequest
   ): Promise<AxiosResponse<EnhancedRetrieveResponse | EnhancedQueryResponse>> => {
-    const token = await Auth.currentSession().then((session) =>
-      session.getIdToken().getJwtToken()
-    );
+    const session = await fetchAuthSession();
+    const token = session.tokens?.idToken?.toString();
     
     // Generate cache key
     const cacheKey = JSON.stringify({
@@ -136,6 +136,33 @@ const useRagApiEnhanced = () => {
     }
     
     const endpoint = import.meta.env.VITE_APP_RAG_KENDRA_RETRIEVE_ENDPOINT!;
+    
+    // Use mock service for local development
+    if (shouldUseMockService()) {
+      console.log('🔧 Using mock RAG API service for development');
+      try {
+        let data: EnhancedRetrieveResponse | EnhancedQueryResponse;
+        
+        if (request.apiType === 'query') {
+          data = await mockRagApiService.queryForSearch(request.query, {
+            pageSize: request.pageSize,
+            facets: request.facets,
+            attributeFilter: request.attributeFilter,
+            includeQuerySuggestions: request.includeQuerySuggestions
+          });
+        } else {
+          data = await mockRagApiService.retrieveForRAG(request.query);
+        }
+        
+        // Cache successful results
+        addToCache(cacheKey, data);
+        
+        return { data, status: 200, statusText: 'OK' } as AxiosResponse;
+      } catch (error) {
+        console.error('Mock RAG API error:', error);
+        throw error;
+      }
+    }
     
     try {
       const result = await axios.post<EnhancedRetrieveResponse | EnhancedQueryResponse>(
@@ -208,6 +235,17 @@ const useRagApiEnhanced = () => {
     facetKeys: string[],
     filters?: Record<string, string[]>
   ): Promise<AxiosResponse<EnhancedQueryResponse>> => {
+    // Use mock service for faceted search in development
+    if (shouldUseMockService()) {
+      try {
+        const data = await mockRagApiService.searchWithFacets(query, facetKeys, filters);
+        return { data, status: 200, statusText: 'OK' } as AxiosResponse;
+      } catch (error) {
+        console.error('Failed to perform mock faceted search:', error);
+        throw error;
+      }
+    }
+
     const facets = facetKeys.map(key => ({
       DocumentAttributeKey: key,
       MaxResults: 10,
@@ -241,6 +279,16 @@ const useRagApiEnhanced = () => {
   const getSuggestions = async (
     partialQuery: string
   ): Promise<string[]> => {
+    // Use mock service for suggestions in development
+    if (shouldUseMockService()) {
+      try {
+        return await mockRagApiService.getSuggestions(partialQuery);
+      } catch (error) {
+        console.error('Failed to get mock suggestions:', error);
+        return [];
+      }
+    }
+
     try {
       const response = await queryForSearch(partialQuery, {
         pageSize: 1,

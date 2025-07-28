@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  formatMetricsForDisplay, 
   RAGPerformanceStats,
   RAGQueryMetrics 
 } from '../hooks/useRagMetrics';
-import { PiChartBar, PiClock, PiTarget, PiTrendUp, PiFileText, PiRefresh } from 'react-icons/pi';
+import { PiChartBar, PiClock, PiTarget, PiTrendUp, PiFileText, PiArrowClockwise } from 'react-icons/pi';
 
 interface RAGMetricsDashboardProps {
   performanceStats: RAGPerformanceStats;
@@ -63,7 +62,7 @@ const PerformanceChart: React.FC<{
 
   return (
     <div className="h-32 flex items-end space-x-2 px-4">
-      {recent.map((item, index) => (
+      {recent.map((item) => (
         <div
           key={item.queryId}
           className="flex-1 bg-blue-500 rounded-t opacity-75 hover:opacity-100 transition-opacity relative group"
@@ -135,7 +134,7 @@ const RAGMetricsDashboard: React.FC<RAGMetricsDashboardProps> = ({
                 onClick={onRefresh}
                 className="p-2 text-gray-400 hover:text-gray-600 transition-colors"
               >
-                <PiRefresh />
+                <PiArrowClockwise />
               </button>
             )}
             <button
@@ -164,7 +163,7 @@ const RAGMetricsDashboard: React.FC<RAGMetricsDashboardProps> = ({
                 onClick={onRefresh}
                 className="p-2 text-gray-400 hover:text-gray-600 transition-colors"
               >
-                <PiRefresh />
+                <PiArrowClockwise />
               </button>
             )}
             <button
@@ -220,7 +219,7 @@ const RAGMetricsDashboard: React.FC<RAGMetricsDashboardProps> = ({
           <div className="bg-gray-50 rounded-lg p-4">
             <h4 className="font-medium text-gray-800 mb-3">Popular Keywords</h4>
             <div className="flex flex-wrap gap-2">
-              {performanceStats.mostCommonQueries.slice(0, 8).map((keyword, index) => (
+              {performanceStats.mostCommonQueries.slice(0, 8).map((keyword) => (
                 <span
                   key={keyword}
                   className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm"

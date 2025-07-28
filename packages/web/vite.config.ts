@@ -81,9 +81,13 @@ export default defineConfig(({ mode }) => ({
     }),
   ],
   test: {
-    name: 'use-case-builder',
-    root: './tests/use-case-builder',
-    environment: 'node',
-    setupFiles: [],
+    name: 'enhanced-rag-components',
+    include: ['src/**/*.{test,spec}.{js,ts,jsx,tsx}', 'tests/**/*.{test,spec}.{js,ts,jsx,tsx}'],
+    environment: 'jsdom',
+    setupFiles: ['./src/test-setup.ts'],
+    globals: true,
+    deps: {
+      inline: ['@testing-library/react', '@testing-library/jest-dom']
+    }
   },
 }));

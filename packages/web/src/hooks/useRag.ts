@@ -5,50 +5,13 @@ import useRagApi from './useRagApi';
 import { ShownMessage } from 'generative-ai-use-cases';
 import { findModelByModelId } from './useModel';
 import { getPrompter } from '../prompts';
-import { RetrieveResultItem, DocumentAttribute } from '@aws-sdk/client-kendra';
+import { RetrieveResultItem } from '@aws-sdk/client-kendra';
 import { cleanEncode } from '../utils/URLUtils';
 import { useTranslation } from 'react-i18next';
 import { RAG_CONFIG, collectMetrics, RAGMetrics, ConfidenceLevel, DocumentType, handleQueryOptimization } from '../config/ragSettings';
 import { useRagMetrics } from './useRagMetrics';
 
-// Enhanced document metadata interface
-interface DocumentMetadata {
-  documentType: string;
-  lastModified?: string;
-  pageNumber?: number;
-  confidence: string;
-  language: string;
-  sourceUri?: string;
-  contentLength: number;
-  relevanceScore: number;
-}
 
-// Extract metadata from document attributes
-const extractDocumentMetadata = (item: RetrieveResultItem): DocumentMetadata => {
-  const attributes = item.DocumentAttributes || [];
-  
-  const getAttributeValue = (key: string): string | number | undefined => {
-    const attr = attributes.find(a => a.Key === key);
-    return attr?.Value?.StringValue || attr?.Value?.LongValue;
-  };
-
-  const contentLength = item.Content?.length || 0;
-  const confidence = item.ScoreAttributes?.ScoreConfidence || 'MEDIUM';
-  
-  // Calculate relevance score based on multiple factors
-  const relevanceScore = calculateRelevanceScore(item);
-
-  return {
-    documentType: getAttributeValue('_file_type') as string || 'text',
-    lastModified: getAttributeValue('_modified_at') as string,
-    pageNumber: getAttributeValue('_excerpt_page_number') as number,
-    confidence: confidence.toLowerCase(),
-    language: getAttributeValue('_language_code') as string || 'unknown',
-    sourceUri: getAttributeValue('_source_uri') as string,
-    contentLength,
-    relevanceScore,
-  };
-};
 
 // Note: handleQueryOptimization function is now imported from ragSettings.ts
 
@@ -147,15 +110,6 @@ const mergeDocumentItems = (items: RetrieveResultItem[]): RetrieveResultItem => 
   };
 };
 
-// Enhanced key generation for document uniqueness
-const uniqueKeyOfItem = (item: RetrieveResultItem): string => {
-  const pageNumber =
-    item.DocumentAttributes?.find(
-      (a: DocumentAttribute) => a.Key === '_excerpt_page_number'
-    )?.Value?.LongValue ?? '';
-  const uri = item.DocumentURI || item.DocumentId || 'unknown';
-  return `${uri}_${pageNumber}`;
-};
 
 // Enhanced arrangement with scoring and intelligent merging
 export const arrangeItems = (
@@ -369,7 +323,7 @@ const useRag = (id: string) => {
           recordResponseGeneration(responseGenerationTime);
           
           // クエリ完了（満足度は後で更新される）
-          const completedQuery = completeQuery();
+          completeQuery();
           
           // Postprocessing: Add the footnote
           const footnote = items

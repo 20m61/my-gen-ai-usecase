@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Auth } from 'aws-amplify';
+import { fetchAuthSession } from 'aws-amplify/auth';
+import { Hub } from 'aws-amplify/utils';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
@@ -73,20 +74,22 @@ const useUserContext = () => {
     try {
       useUserContextStore.setState({ isLoading: true, error: null });
       
-      const session = await Auth.currentSession();
-      const idToken = session.getIdToken();
-      const payload = idToken.payload;
+      const session = await fetchAuthSession();
+      const idToken = session.tokens?.idToken;
+      const payload = idToken?.payload || {};
       
       // Extract user information from token
-      const userId = payload.sub || '';
-      const email = payload.email || '';
-      const cognitoGroups = payload['cognito:groups'] || [];
+      const userId = String(payload.sub || '');
+      const email = String(payload.email || '');
+      const cognitoGroups = Array.isArray(payload['cognito:groups']) 
+        ? payload['cognito:groups'].map(String) 
+        : [];
       
       // Extract custom attributes
       const customAttributes: Record<string, string> = {};
       Object.keys(payload).forEach(key => {
         if (key.startsWith('custom:')) {
-          customAttributes[key.replace('custom:', '')] = payload[key];
+          customAttributes[key.replace('custom:', '')] = String(payload[key] || '');
         }
       });
       
@@ -96,7 +99,7 @@ const useUserContext = () => {
         groups: cognitoGroups,
         department: customAttributes.department,
         role: customAttributes.role,
-        permissions: customAttributes.permissions?.split(',').filter(Boolean),
+        permissions: customAttributes.permissions ? customAttributes.permissions.split(',').filter(Boolean) : undefined,
         attributes: customAttributes,
       };
       
@@ -137,7 +140,7 @@ const useUserContext = () => {
       }
     };
 
-    const hubListener = Auth.Hub.listen('auth', listener);
+    const hubListener = Hub.listen('auth', listener);
     return () => hubListener();
   }, []);
 

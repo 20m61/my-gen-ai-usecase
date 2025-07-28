@@ -3,7 +3,6 @@ import {
   PiMagnifyingGlass,
   PiFunnel,
   PiSortAscending,
-  PiSortDescending,
   PiX,
   PiCaretDown,
   PiCaretUp,
