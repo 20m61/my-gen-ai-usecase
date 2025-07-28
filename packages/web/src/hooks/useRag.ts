@@ -8,7 +8,7 @@ import { getPrompter } from '../prompts';
 import { RetrieveResultItem, DocumentAttribute } from '@aws-sdk/client-kendra';
 import { cleanEncode } from '../utils/URLUtils';
 import { useTranslation } from 'react-i18next';
-import { RAG_CONFIG, collectMetrics, RAGMetrics, ConfidenceLevel, DocumentType } from '../config/ragSettings';
+import { RAG_CONFIG, collectMetrics, RAGMetrics, ConfidenceLevel, DocumentType, handleQueryOptimization } from '../config/ragSettings';
 
 // Enhanced document metadata interface
 interface DocumentMetadata {
@@ -49,34 +49,7 @@ const extractDocumentMetadata = (item: RetrieveResultItem): DocumentMetadata => 
   };
 };
 
-// 改善されたクエリ最適化エラーハンドリング
-const handleQueryOptimization = (rawQuery: string, originalQuery: string): string => {
-  const trimmed = rawQuery.trim();
-  
-  if (trimmed === 'INSUFFICIENT_QUERY') {
-    console.warn('Query optimization returned INSUFFICIENT_QUERY', { originalQuery });
-    return originalQuery;
-  }
-  
-  if (trimmed.length < RAG_CONFIG.query.minLength) {
-    console.warn('Query optimization returned too short query', { 
-      optimized: trimmed, 
-      original: originalQuery,
-      minLength: RAG_CONFIG.query.minLength
-    });
-    return originalQuery;
-  }
-  
-  if (trimmed.length > RAG_CONFIG.query.maxLength) {
-    console.warn('Query optimization returned too long query', { 
-      optimized: trimmed,
-      maxLength: RAG_CONFIG.query.maxLength
-    });
-    return trimmed.substring(0, RAG_CONFIG.query.maxLength);
-  }
-  
-  return trimmed;
-};
+// Note: handleQueryOptimization function is now imported from ragSettings.ts
 
 // 設定ベースのスコアリング計算
 const calculateRelevanceScore = (item: RetrieveResultItem): number => {

@@ -197,57 +197,32 @@ ${
   },
   ragPrompt(params: RagParams): string {
     if (params.promptType === 'RETRIEVE') {
-      return `Transform the user's question into an optimized search query for document retrieval.
+      return `Transform question to search query (3-15 words):
 
-<context>
-${params.retrieveQueries!.map((q, idx) => `${idx + 1}. ${q}`).join('\n')}
-</context>
+Context: ${params.retrieveQueries!.slice(-2).join(' ')}
 
-<rules>
-1. Focus on the most recent query
-2. Extract key concepts and keywords
-3. Use 3-15 words for optimal results
-4. Avoid question words (what, how, why)
-5. Maintain language consistency
-6. Remove conversational elements
-</rules>
+Rules: Extract key concepts, avoid question words, keep concise.
 
-<examples>
-"What is machine learning?" → "machine learning definition algorithms"
-"How does neural network training work?" → "neural network training process"
-"Tell me about AWS Lambda pricing" → "AWS Lambda pricing costs"
-</examples>
+Examples:
+"What is machine learning?" → "machine learning definition"
+"AWS Lambda pricing?" → "AWS Lambda pricing costs"
 
-Output only the optimized query. If unclear, output: "INSUFFICIENT_QUERY"`;
+Output optimized query only. If unclear: "INSUFFICIENT_QUERY"`;
     } else {
-      return `You are a document analyst providing accurate answers based on retrieved documents.
+      return `Answer based on these documents. Use [^0], [^1] citations.
 
-<documents>
 ${params.referenceItems!.map((item, idx) => {
   const pageNumber = item.DocumentAttributes?.find(
     (attr) => attr.Key === '_excerpt_page_number'
   )?.Value?.LongValue;
-  const fileType = item.DocumentAttributes?.find(
-    (attr) => attr.Key === '_file_type'
-  )?.Value?.StringValue;
   const confidence = item.ScoreAttributes?.ScoreConfidence || 'MEDIUM';
   
-  return `[${idx}] ${item.DocumentTitle || 'Untitled'}
-${pageNumber ? `Page: ${pageNumber} | ` : ''}${fileType ? `Type: ${fileType} | ` : ''}Confidence: ${confidence}
-Content: ${item.Content || 'No content available'}
+  return `[^${idx}] ${item.DocumentTitle || 'Untitled'}${pageNumber ? ` (p.${pageNumber})` : ''} [${confidence}]
+${item.Content || 'No content'}
 ---`;
 }).join('\n')}
-</documents>
 
-<instructions>
-1. Answer based strictly on the provided documents
-2. Use [^0], [^1] for source citations
-3. If information is incomplete, state this clearly
-4. Provide structured responses with clear reasoning
-5. Indicate confidence levels when appropriate
-</instructions>
-
-Answer the user's question using the documents above. If insufficient information is available, clearly state what you can and cannot answer based on the sources.`;
+If insufficient info, state limitations clearly.`;
     }
   },
   videoAnalyzerPrompt(params: VideoAnalyzerParams): string {
