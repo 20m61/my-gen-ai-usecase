@@ -15,6 +15,10 @@ const useUserSetting = () => {
     'showEmail',
     true
   );
+  const [settingRagDebugMode, setSettingRagDebugMode] = useLocalStorageBoolean(
+    'ragDebugMode',
+    false
+  );
 
   return {
     settingSubmitCmdOrCtrlEnter,
@@ -27,6 +31,8 @@ const useUserSetting = () => {
     setSettingShowTools,
     settingShowEmail,
     setSettingShowEmail,
+    settingRagDebugMode,
+    setSettingRagDebugMode,
   };
 };
 
