@@ -13,6 +13,7 @@ import {
   McpApi,
   AgentCore,
 } from './construct';
+import { RagEnhanced } from './construct/rag-enhanced';
 import { CfnWebACLAssociation } from 'aws-cdk-lib/aws-wafv2';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import { ICertificate } from 'aws-cdk-lib/aws-certificatemanager';
@@ -265,6 +266,26 @@ export class GenerativeAiUseCasesStack extends Stack {
         vpc: props.vpc,
         securityGroups,
       });
+
+      // Enhanced RAG features (if enabled via environment variable)
+      const enableRagEnhancements = process.env.ENABLE_RAG_ENHANCEMENTS === 'true';
+      if (enableRagEnhancements) {
+        // Get Kendra index information
+        const kendraIndexId = params.kendraIndexArn 
+          ? params.kendraIndexArn.split('/').pop()! 
+          : 'NEW_INDEX'; // Placeholder for new index
+        
+        const kendraIndexArn = params.kendraIndexArn || `arn:aws:kendra:${this.region}:${this.account}:index/${kendraIndexId}`;
+
+        new RagEnhanced(this, 'RagEnhanced', {
+          kendraIndexId,
+          kendraIndexArn,
+          kendraIndexLanguage: params.kendraIndexLanguage,
+          userPool: auth.userPool,
+          api: api.api,
+          enableMonitoring: process.env.ENABLE_RAG_MONITORING === 'true',
+        });
+      }
 
       // Allow downloading files from the File API to the data source Bucket
       // If you are importing existing Kendra, there is a possibility that the data source is not S3
