@@ -10,7 +10,7 @@
     "prebuild": "npm run clean"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-agentcore-control": "^3.755.0"
+    "@aws-sdk/client-bedrock-agentcore-control": "^3.987.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
